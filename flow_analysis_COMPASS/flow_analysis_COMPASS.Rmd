@@ -1,0 +1,291 @@
+---
+title: "Flow Analysis COMPASS Tutorial"
+author: "Jolie Phan"
+date: "version `r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: yes
+    toc_depth: 4
+    toc_float:
+      collapsed: no
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Directory structure
+To directly use the code in this tutorial, you should create an RStudio project and set up your project directory as follows.
+
+The `data/` folder should contain all `.xml` and `.fcs` files and the `out/` folder will contain the GatingSet and all COMPASS outputs.
+
+```{r dir_structure, echo=FALSE, message=FALSE}
+# You don't need to run this! See README or html for figure.
+library(DiagrammeR)
+grViz(diagram = "digraph flowchart {
+  node [fontname = arial, shape = retangle, fontsize=8, height=0.1]
+  dir1 [label = '@@1']
+  dir2 [label = '@@2']
+  dir3 [label = '@@3']
+  dir4 [label = '@@4']
+  dir5 [label = '@@5']
+  dir6 [label = '@@6']
+  dir7 [label = '@@7']
+  dir1 -> dir2,dir3;
+  dir2 -> dir4,dir5;
+  dir3 -> dir6,dir7;
+  }
+  
+  [1]: 'Rproject/'
+  [2]: 'data/'
+  [3]: 'out/'
+  [4]: '.xml'
+  [5]: '.fcs files'
+  [6]: 'GatingSet/'
+  [7]: 'COMPASSResult/'
+  ")
+```
+
+You can achieve this directory structure by running the following command lines:
+
+```{r}
+if(!dir.exists(here::here("data"))) {
+  cat(sprintf("Creating folder %s\n", here::here("data")))
+  dir.create(here::here("data"), recursive = T)
+}
+if(!dir.exists(here::here("out"))) {
+  cat(sprintf("Creating folder %s\n", here::here("out")))
+  dir.create(here::here("out"), recursive = T)
+}
+if(!dir.exists(here::here("out/GatingSet"))) {
+  cat(sprintf("Creating folder %s\n", here::here("out/GatingSet")))
+  dir.create(here::here("out/GatingSet"), recursive = T)
+}
+if(!dir.exists(here::here("out/COMPASSResult"))) {
+  cat(sprintf("Creating folder %s\n", here::here("out/COMPASSResult")))
+  dir.create(here::here("out/COMPASSResult"), recursive = T)
+}
+```
+
+# Load libraries
+
+```{r}
+library(here)
+library(CytoML)
+library(flowCore)
+library(flowWorkspace)
+library(COMPASS)
+```
+
+# Load data
+Download the .xml file and folder containing the associated .fcs files (see the README for updated directions). Then, drag them into the "data" folder of the project directory.
+
+This data has been gated in FlowJo v9 and will be parsed using flowWorkspace.
+
+**FYI:** *When using FlowJo v9, the FlowJo workspace must be exported as an .xml file to create a flowjo_workspace object with the function open_flowjo_xml(). However, when using FlowJo v10, the FlowJo workspace can be loaded directly as a .wsp file using the same function open_flow_xml().*
+
+```{r}
+# Location of XML file
+xml_path <- here::here("data/20200605_COVID_ICS-B3-trunc.xml")
+
+# Location of .fcs files
+fcs_subfolder <- here::here("data/20200605_COVID_ICS-B3-FCS-trunc/")
+```
+
+Create a flowjo_workspace object with the function open_flowjo_xml().
+
+```{r}
+ws <- open_flowjo_xml(xml_path)
+```
+
+# Create a GatingSet
+
+## Set-up
+
+A GatingSet holds a set of GatingHierarchy objects, representing a set of samples 
+and the gating scheme associated with each.
+
+Look at the workspace metadata to choose which keywords to extract into the 
+GatingSet. The flowjo_to_gatingset() function parses a flowJo Workspace to 
+generate a GatingSet object.
+
+```{r}
+# Look at all of the keywords
+names(fj_ws_get_keywords(ws, 117)) 
+# Choose which keywords to keep
+keywords2import <- c("EXPERIMENT NAME",
+                       "$DATE",
+                       "SAMPLE ID",
+                       "PATIENT ID",
+                       "STIM",
+                       "WELL ID",
+                       "PLATE NAME") 
+sampleGroup <- "Samples"
+
+gs <- flowjo_to_gatingset(ws,                                    
+                          name = sampleGroup, 
+                          keywords = keywords2import,
+                          path = fcs_subfolder, 
+                          extend_val = -10000)
+```
+
+## QC
+
+Make sure that the gating trees are consistent for all samples.
+
+```{r}
+pop_lists <- lapply(gs, gh_get_pop_paths)
+unique(pop_lists)
+```
+
+Remove channels from flow data that are not used by gates.
+
+```{r}
+gs <- gs_remove_redundant_channels(gs) # drop SSC-H
+```
+
+Add names to all channels or change their names.
+
+```{r}
+dput(unname(pData(parameters(gh_pop_get_data(gs[[1]])))[,2]))
+markernames <- c("Time", "FSC-A", "FSC-H", "SSC-A", "CD8b", "TNFa", "CD107a",
+                 "CD154", "CD3", "IL2", "CD4", "IL17a", "IL4_5_13", "CD14_19",
+                 "CCR7", "CD38", "LD", "IFNg", "CD45RA", "HLADR")
+names(markernames) <- pData(parameters(gh_pop_get_data(gs[[1]])))[,1]
+markernames(gs) <- markernames
+pData(parameters(gh_pop_get_data(gs[[1]])))[,c(1,2)]
+```
+
+In this tutorial, we will only run COMPASS on CD4+ T cells, but what if we wanted to also run COMPASS on CD8+ T cells? Currently, most of the gates are missing from the "8+" node. Let's grab the missing gates from the "NOT4+" node and add them under the "8+" node.
+
+```{r}
+gates_to_copy <- c("/Time/LD-3+/1419-3+/S/Lymph/NOT4+/107a",
+                   "/Time/LD-3+/1419-3+/S/Lymph/NOT4+/154", 
+                   "/Time/LD-3+/1419-3+/S/Lymph/NOT4+/IL2",
+                   "/Time/LD-3+/1419-3+/S/Lymph/NOT4+/IL17",
+                   "/Time/LD-3+/1419-3+/S/Lymph/NOT4+/IL4513",
+                   "/Time/LD-3+/1419-3+/S/Lymph/NOT4+/TNF",
+                   "/Time/LD-3+/1419-3+/S/Lymph/NOT4+/CCR7+",
+                   "/Time/LD-3+/1419-3+/S/Lymph/NOT4+/CD45RA+")
+
+for(path in gates_to_copy) {
+  gs_pop_add(gs, lapply(gs, gh_pop_get_gate, y=path),
+             parent = "/Time/LD-3+/1419-3+/S/Lymph/8+")
+}
+recompute(gs, "/Time/LD-3+/1419-3+/S/Lymph/8+")
+```
+
+Next, let's get rid of the "NOT4+" node and all of its descendants.
+
+```{r}
+gs_pop_remove(gs, "/Time/LD-3+/1419-3+/S/Lymph/NOT4+")
+```
+
+Plot the gating tree.
+
+```{r, fig.width = 6, fig.height = 4}
+plot(gs, fontsize=15, bool=T)
+```
+
+
+
+## Save GatingSet
+
+**Note:** this can take a while. 
+
+```{r}
+save_gs(gs, here::here("out/GatingSet"))
+```
+
+# Create a COMPASSContainer
+
+A COMPASSContainer is the data structure used to hold data from an ICS experiment.
+The input for this code is a GatingSet or a GatingSetList. Counts, metadata, and 
+single cell data are extracted and fed into the COMPASSContainer constructor.
+
+```{r}
+# Set the seed
+set.seed(123)
+
+# A regular expression to match a single node in the gating tree
+parent_node <- "4+"
+
+# A character identifying the subject id column in the GatingSet metadata
+id <- "SAMPLE ID"
+
+markernames(gs) 
+
+# markermap contains the output of markernames(gs)
+markermap <- list("IL2", "IL4_5_13", "IFNg", "TNFa", "IL17a", "CD154", "CD107a")
+
+# Assign names to the list of markers based on the gate names
+names(markermap) <- paste0(parent_node, "/", c("IL2", "IL4513", "IFNG",
+                                               "TNF", "IL17", "154", 
+                                               "107a"))
+```
+
+Construct the COMPASSContainer. If the number of parent cells is less than countFilterThreshold, we drop that file (default is 5000 cells).
+
+```{r}
+CC <- COMPASSContainerFromGatingSet(gs,
+                                    node = parent_node,
+                                    individual_id = id,
+                                    mp = markermap,
+                                    countFilterThreshold = 5000)
+```
+
+Look at some basic info about our COMPASSContainer.
+
+```{r}
+CC
+```
+
+# Run COMPASS
+
+Fit the COMPASS model using the COMPASSContainer. To fit the COMPASS model, we 
+need to specify how to identify the samples that are our treatment condition and 
+our control condition. Here, we will run COMPASS on the samples stimmed by spike
+1 with DMSO as our negative control. For now, let's just do 100 iterations for 
+speed.
+
+```{r}
+fit <- COMPASS(CC,
+               treatment = STIM == "Spike 1",
+               control = STIM == "DMSO",
+               iterations = 100)
+```
+
+Save the COMPASS run output.
+
+```{r}
+saveRDS(fit, file.path(here::here("out/COMPASSResult"), "COMPASSResult.rds"))
+```
+
+Save the Functionality and Polyfunctionality Scores.
+
+```{r}
+FS <- FunctionalityScore(fit)
+FS_df <- data.frame(tmp = names(FS), FS = FS)
+colnames(FS_df) <- c("SAMPLE ID", "FS")
+
+PFS <- PolyfunctionalityScore(fit)
+PFS_df <- data.frame(tmp = names(PFS), PFS = PFS)
+colnames(PFS_df) <- c("SAMPLE ID", "PFS")
+
+FS_PFS_df <- merge(FS_df, PFS_df, by = "SAMPLE ID")
+write.table(FS_PFS_df,
+            file = file.path(here::here("out/COMPASSResult"), "FS_PFS.tsv"),
+            sep = "\t", row.names = FALSE, quote = FALSE)
+FS_PFS_df
+```
+
+# Visualize
+
+Plot a heatmap of the mean probability of response.
+
+```{r, fig.width = 6, fig.height = 4}
+plot(fit, show_rownames = TRUE)
+```
+
