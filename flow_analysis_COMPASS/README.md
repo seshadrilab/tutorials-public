@@ -32,7 +32,7 @@ BiocManager::install("flowWorkspace")
 BiocManager::install("COMPASS")
 ```
 # Directory Structure
-To directly use the code in this tutorial, you should create an RStudio project and set up your project directory as follows. The `data/` folder should contain all `.xml` and `.fcs` files and the `out/` folder will contain the GatingSet all COMPASS outputs.
+To directly use the code in this tutorial, you should create an RStudio project and set up your project directory as follows. The `data/` folder should contain all `.xml` and `.fcs` files and the `out/` folder will contain the GatingSet and all COMPASS outputs.
 ![image](https://user-images.githubusercontent.com/89667908/147301852-f5c1d505-cb04-4841-bdbe-981b0d4bc6f9.png)
 
 You can achieve this directory structure by running the following command lines:
