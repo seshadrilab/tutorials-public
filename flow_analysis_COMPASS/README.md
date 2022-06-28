@@ -212,7 +212,7 @@ for(path in gates_to_copy) {
   gs_pop_add(gs, lapply(gs, gh_pop_get_gate, y=path),
              parent = "/Time/LD-3+/1419-3+/S/Lymph/8+")
 }
-recompute(gs, "/Time/LD-3+/1419-3+/S/Lymph/8+")
+recompute(gs)
 ```
 ```R
 # done!
