@@ -103,6 +103,7 @@ keywords2import <- c("EXPERIMENT NAME",
                        "STIM",
                        "WELL ID",
                        "PLATE NAME") 
+# Select which group within the FlowJo workspace to pull the samples from
 sampleGroup <- "Samples"
 gs <- flowjo_to_gatingset(ws,                                    
                           name = sampleGroup, 
