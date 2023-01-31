@@ -233,6 +233,7 @@ plot(gs, fontsize=15, bool=T)
 **Note:** this can take a while.
 ```R
 save_gs(gs, here::here("out/GatingSet"), overwrite = TRUE)
+# To reload the GatingSet for future analyses, use load_gs()
 ```
 
 ## Create a COMPASSContainer
